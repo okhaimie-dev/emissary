@@ -1,0 +1,41 @@
+name: collect
+
+# Hourly STONX / ve(3,3) snapshot on Robinhood Chain.
+# Runs in the cloud so history keeps accumulating even when laptops are closed.
+
+on:
+  schedule:
+    - cron: "7 * * * *" # hourly at :07 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect snapshot
+        run: python3 collector/collect.py
+
+      - name: Commit compact history
+        run: |
+          git config user.name "emissary-bot"
+          git config user.email "emissary-bot@users.noreply.github.com"
+          git add data/history
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "snapshot: $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi

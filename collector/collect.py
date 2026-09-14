@@ -35,6 +35,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, "data")
 SNAP_DIR = os.path.join(DATA_DIR, "snapshots")
 DB_PATH = os.path.join(DATA_DIR, "emissary.db")
+HISTORY_DIR = os.path.join(DATA_DIR, "history")  # compact per-run files, safe to commit
+
+# STONX bootstrap emissions: ~3,333.33 STONX/day pre-scheduled for ~100 days
+# (see ekubo.org/blog "Launch STONX on Robinhood Chain"). Used for efficiency math.
+EMISSIONS_DAILY_STONX = 3333.33
 
 
 def get(path, timeout=30):
@@ -102,21 +107,62 @@ def save_raw(ts, name, obj):
 
 
 def fetch_tokens(con, addresses, ts):
-    """Fetch metadata for a set of token addresses (chain 4663), upsert into DB."""
+    """Fetch metadata for a set of token addresses (chain 4663), upsert into DB.
+    Returns (count, meta) where meta maps normalized address -> token info."""
     got = 0
+    meta = {}
     for addr in addresses:
         try:
             t = get(f"/tokens/{CHAIN_ID}/{addr}")
         except RuntimeError:
             continue  # token not in the API catalog — skip
+        a = norm_addr(addr)
         con.execute(
             "INSERT OR REPLACE INTO tokens VALUES (?,?,?,?,?,?,?)",
-            (CHAIN_ID, norm_addr(addr), t.get("symbol"), t.get("name"),
+            (CHAIN_ID, a, t.get("symbol"), t.get("name"),
              t.get("decimals"), t.get("usd_price"), ts),
         )
+        meta[a] = {"symbol": t.get("symbol"), "decimals": t.get("decimals"),
+                   "usd_price": t.get("usd_price")}
         got += 1
     con.commit()
-    return got
+    return got, meta
+
+
+def write_history(ts, pools, meta):
+    """Write a compact, commit-friendly snapshot to data/history/<ts>.json.
+
+    This is the file we commit from GitHub Actions every hour — small (~30-60KB)
+    and complete enough to rebuild the dashboard and the weekly reports.
+    """
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    keys = ["pool_id", "token0", "token1", "fee", "tick_spacing",
+            "pool_total_vote_weight", "swap_fee",
+            "volume0_24h", "volume1_24h",
+            "ve33_fees0_24h", "ve33_fees1_24h",
+            "ve33_fees0_7d", "ve33_fees1_7d",
+            "tvl0_total", "tvl1_total", "depth_percent"]
+    trim = []
+    for p in pools:
+        row = {k: p.get(k) for k in keys}
+        row["token0"] = norm_addr(p["token0"])
+        row["token1"] = norm_addr(p["token1"])
+        st = p.get("pool_state") or {}
+        row["tick"] = st.get("tick")
+        row["liquidity"] = st.get("liquidity")
+        trim.append(row)
+    out = {
+        "ts": ts,
+        "chain_id": CHAIN_ID,
+        "ve33": VE33,
+        "emissions_daily_stonx": EMISSIONS_DAILY_STONX,
+        "tokens": meta,
+        "pools": trim,
+    }
+    path = os.path.join(HISTORY_DIR, ts + ".json")
+    with open(path, "w") as f:
+        json.dump(out, f, separators=(",", ":"))
+    return path
 
 
 def run_once():
@@ -184,7 +230,11 @@ def run_once():
         addrs.add(x["token0"])
         addrs.add(x["token1"])
     n = fetch_tokens(con, sorted(addrs), ts)
-    print(f"  token metadata: {n}/{len(addrs)}")
+    print(f"  token metadata: {n[0]}/{len(addrs)}")
+
+    # 5. compact, commit-friendly history snapshot
+    hist = write_history(ts, pools, n[1])
+    print(f"  history: {hist}")
 
     con.close()
     print(f"[{ts}] done → {DB_PATH}")
