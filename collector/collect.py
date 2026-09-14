@@ -236,6 +236,13 @@ def run_once():
     hist = write_history(ts, pools, n[1])
     print(f"  history: {hist}")
 
+    # 6. refresh the web dashboard data (best effort)
+    try:
+        import export_web
+        export_web.main()
+    except Exception as e:
+        print(f"  web export skipped: {e}")
+
     con.close()
     print(f"[{ts}] done → {DB_PATH}")
 

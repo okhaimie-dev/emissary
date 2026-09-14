@@ -2,3 +2,5 @@ data/snapshots/
 data/*.db
 __pycache__/
 collector/collector.log
+node_modules/
+dashboard/dist/
