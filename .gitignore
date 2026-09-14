@@ -1,0 +1,3 @@
+data/snapshots/
+data/*.db
+__pycache__/
