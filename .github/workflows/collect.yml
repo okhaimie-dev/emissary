@@ -4,8 +4,10 @@ name: collect
 # Runs in the cloud so history keeps accumulating even when laptops are closed.
 
 on:
-  schedule:
-    - cron: "7 * * * *" # hourly at :07 UTC
+  # Hourly collection is paused until the GitHub account billing lock is resolved.
+  # To re-enable, uncomment the schedule block below.
+  # schedule:
+  #   - cron: "7 * * * *" # hourly at :07 UTC
   workflow_dispatch: {}
 
 permissions:
